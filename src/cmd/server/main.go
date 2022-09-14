@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -11,8 +13,11 @@ import (
 
 	hellopb "mygrpc/pkg/grpc"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/reflection"
+	"google.golang.org/grpc/status"
 )
 
 type myServer struct {
@@ -21,6 +26,23 @@ type myServer struct {
 
 func NewMyServer() *myServer {
 	return &myServer{}
+}
+
+func (s *myServer) HelloClientStream(stream hellopb.GreetingService_HelloClientStreamServer) error {
+	nameList := make([]string, 0)
+	for {
+		req, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			message := fmt.Sprintf("Hello, %v", nameList)
+			return stream.SendAndClose(&hellopb.HelloResponse{
+				Message: message,
+			})
+		}
+		if err != nil {
+			return err
+		}
+		nameList = append(nameList, req.GetName())
+	}
 }
 
 func (s *myServer) HelloServerStream(req *hellopb.HelloRequest, stream hellopb.GreetingService_HelloServerStreamServer) error {
@@ -34,6 +56,24 @@ func (s *myServer) HelloServerStream(req *hellopb.HelloRequest, stream hellopb.G
 		time.Sleep(time.Second * 1)
 	}
 	return nil
+}
+
+func (s *myServer) HelloBiStreams(stream hellopb.GreetingService_HelloBiStreamsServer) error {
+	for {
+		req, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		message := fmt.Sprintf("Hello, %v!", req.GetName())
+		if err := stream.Send(&hellopb.HelloResponse{
+			Message: message,
+		}); err != nil {
+			return err
+		}
+	}
 }
 
 func main() {
@@ -62,7 +102,10 @@ func main() {
 }
 
 func (s *myServer) Hello(ctx context.Context, req *hellopb.HelloRequest) (*hellopb.HelloResponse, error) {
-	return &hellopb.HelloResponse{
-		Message: fmt.Sprintf("Hello, %s!", req.GetName()),
-	}, nil
+	stat := status.New(codes.Unknown, "unknown error occurred")
+	stat, _ = stat.WithDetails(&errdetails.DebugInfo{
+		Detail: "detail reason of err",
+	})
+	err := stat.Err()
+	return nil, err
 }
